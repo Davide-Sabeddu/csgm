@@ -4,19 +4,25 @@ Code to reproduce the results in the paper [Conditional score-based diffusion mo
 
 ## Installation
 
-Run the commands below to install the required packages. Make sure to adapt the `pytorch-cuda` version to your CUDA version in `environment.yml`.
+For further development and to run the examples, clone the repository
+and install the package in editable mode. **Make sure to adapt CUDA
+version in `setup.cfg` to the one installed on your system by specifying
+in as `torch-cuda==XY.Z`.**
 
 ```bash
-cd csgm/
-conda env create -f environment.yml
+# Create a new conda environment.
+conda create --name csgm "python<=3.12"
 conda activate csgm
+
+# Clone the repository and install the package in editable mode.
+git clone https://github.com/alisiahkoohi/csgm
+cd csgm/
 pip install -e .
 ```
 
 After the above steps, you can run the example scripts by just
 activating the environment, i.e., `conda activate csgm`, the
 following times.
-
 ## Data
 
 ### Training data
@@ -55,12 +61,6 @@ A summary of results for the toy quadratic and seismic imaging examples can be f
 
 ## Questions
 
-Please contact alisk@rice.edu for questions.
+Please contact alisk@ucf.edu for questions.
 
 ## Author
-
-Ali Siahkoohi
-
-
-
-
