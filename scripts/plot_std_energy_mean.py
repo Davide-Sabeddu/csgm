@@ -13,14 +13,16 @@ EXPERIMENTS = [
 ]
 
 CHECKPOINTS = [
-    list(range(0, 701, 50)),
-    list(range(0, 7001, 500))
+    list(range(0, 701, 100)),
+    list(range(0, 7001, 1000))
 ]
 
-NUM_SAMPLES = 2000
+NUM_CONDITIONALS = 64
+train_indices = list(range(NUM_CONDITIONALS))  
 BATCH_SIZE = 32
-TRAIN_IDX = 0
+NUM_SAMPLES = 512
 VAL_IDX = 0
+val_indices = [VAL_IDX]  
 DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 SAVE_DIR = "posterior_sampling_results"
@@ -34,10 +36,15 @@ def run_all_experiments():
 
     dset_train, dset_val, _, _ = get_seismic_dataset()
 
-    condition_sets = {
-        "train": dset_train.tensors[0][TRAIN_IDX, 1, ...].unsqueeze(0),
-        "val":   dset_val.tensors[0][VAL_IDX, 1, ...].unsqueeze(0)
-    }
+    condition_sets = []
+
+    for idx in train_indices:
+        y_cond_single = dset_train.tensors[0][idx, 1, ...].unsqueeze(0)
+        condition_sets.append(("train", idx, y_cond_single))
+
+    for idx in val_indices:
+        y_cond_single = dset_val.tensors[0][idx, 1, ...].unsqueeze(0)
+        condition_sets.append(("val", idx, y_cond_single))
 
     for cond_name, y_cond_single in condition_sets.items():
         print(f"\n=== Running conditional: {cond_name} ===")
@@ -136,7 +143,102 @@ def load_existing_results():
     return all_results
 
 
-def plot_statistics_evolution_train_mixed():
+# def plot_frobenius_norms_iterations():
+#     plt.figure(figsize=(12,5))
+#     labels = ["full dataset", "10% subset"]
+
+#     # Set dataset sizes and batch size
+#     dataset_sizes = [1000, 100]  # full dataset, 10%
+#     batch_size = BATCH_SIZE
+
+#     # ---- Frobenius norm of mean ----
+#     plt.subplot(1, 2, 1)
+#     for i, (cond_name, results) in enumerate(all_results):
+#         if cond_name != "train":
+#             continue
+#         num_batches_per_epoch = int(np.ceil(dataset_sizes[i] / batch_size))
+#         iterations = np.array(results["epoch"]) * num_batches_per_epoch
+#         mean_vals = np.array([np.linalg.norm(m, 'fro') for m in results["mean"]])
+#         plt.plot(iterations, mean_vals, label=labels[i])
+#     plt.xlabel("Total iterations")
+#     plt.ylabel("Frobenius norm of mean")
+#     plt.title("Posterior mean Frobenius norm")
+#     plt.grid(True)
+#     plt.legend()
+
+#     # ---- Frobenius norm of std ----
+#     plt.subplot(1, 2, 2)
+#     for i, (cond_name, results) in enumerate(all_results):
+#         if cond_name != "train":
+#             continue
+#         num_batches_per_epoch = int(np.ceil(dataset_sizes[i] / batch_size))
+#         iterations = np.array(results["epoch"]) * num_batches_per_epoch
+#         std_vals = np.array([np.linalg.norm(s, 'fro') for s in results["std"]])
+#         plt.plot(iterations, std_vals, label=labels[i])
+#     plt.xlabel("Total iterations")
+#     plt.ylabel("Frobenius norm of std")
+#     plt.title("Posterior std Frobenius norm")
+#     plt.grid(True)
+#     plt.yscale("log")
+#     plt.legend()
+
+#     plt.tight_layout()
+#     save_path = os.path.join(SAVE_DIR, "frobenius_norms_total_iterations.png")
+#     plt.savefig(save_path, dpi=300, bbox_inches="tight")
+#     print(f"Saved plot to {save_path}")
+ 
+
+def plot_frobenius_norms_iterations():
+    plt.figure(figsize=(12,5))
+    labels = ["full dataset", "10% subset"]
+
+    # Number of samples for each experiment
+    num_samples_list = [4752, 475]  # full dataset, 10% subset
+    batch_size = 128
+
+    # ---- Frobenius norm of mean ----
+    plt.subplot(1, 2, 1)
+    for i, (cond_name, results) in enumerate(all_results):
+        if cond_name != "train":
+            continue
+
+        steps_per_epoch = int(np.ceil(num_samples_list[i] / batch_size))
+        iterations = np.array(results["epoch"]) * steps_per_epoch
+        mean_vals = np.array([np.linalg.norm(m, 'fro') for m in results["mean"]])
+        label = f"{labels[i]}"
+        plt.plot(iterations, mean_vals, label=label)
+
+    plt.xlabel("Total iterations")
+    plt.ylabel("Frobenius norm of mean")
+    plt.title("Frobenius norm of posterior mean")
+    plt.grid(True)
+    plt.legend()
+
+    # ---- Frobenius norm of std ----
+    plt.subplot(1, 2, 2)
+    for i, (cond_name, results) in enumerate(all_results):
+        if cond_name != "train":
+            continue
+
+        steps_per_epoch = int(np.ceil(num_samples_list[i] / batch_size))
+        iterations = np.array(results["epoch"]) * steps_per_epoch
+        std_vals = np.array([np.linalg.norm(s, 'fro') for s in results["std"]])
+        label = f"{labels[i]}"
+        plt.plot(iterations, std_vals, label=label)
+
+    plt.xlabel("Total iterations")
+    plt.ylabel("Frobenius norm of std")
+    plt.title("Frobenius norm of posterior std")
+    plt.grid(True)
+    plt.yscale("log")
+    plt.legend()
+
+    plt.tight_layout()
+    save_path = os.path.join(SAVE_DIR, "frobenius_norms_train_conditional_iterations.png")
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    print(f"Saved plot to {save_path}") 
+
+def plot_statistics_evolution():
     plt.figure(figsize=(18,5))
     labels = ["full dataset", "10% subset"]
 
@@ -150,7 +252,7 @@ def plot_statistics_evolution_train_mixed():
         epochs_norm = epochs / epochs[-1]
         label = f"{labels[i % 2]} ({cond_name})"
         plt.plot(epochs_norm, mean_vals, label=label)
-    plt.xlabel("Normalized epoch")
+    plt.xlabel("Normalized epochs")
     plt.ylabel("Mean of posterior")
     plt.title("Posterior mean evolution")
     plt.grid(True)
@@ -171,9 +273,9 @@ def plot_statistics_evolution_train_mixed():
 
         label = f"{labels[i % 2]} ({cond_name})"
         plt.plot(epochs_norm_cut, std_vals_cut, label=label)
-    plt.xlabel("Normalized epoch (after 10%)")
+    plt.xlabel("Normalized epochs")
     plt.ylabel("Posterior std")
-    plt.title("Posterior std evolution (train)")
+    plt.title("Posterior std evolution ")
     plt.grid(True)
     plt.yscale("log")
     plt.legend()
@@ -181,7 +283,7 @@ def plot_statistics_evolution_train_mixed():
  
     plt.subplot(1, 3, 3)
     for i, (cond_name, results) in enumerate(all_results):
-        if cond_name != "train":
+        if cond_name != "val":
             continue
         epochs = np.array(results["epoch"])
         energy_vals = np.array([e.mean() for e in results["energy"]])
@@ -193,15 +295,15 @@ def plot_statistics_evolution_train_mixed():
 
         label = f"{labels[i % 2]} ({cond_name})"
         plt.plot(epochs_norm_cut, energy_vals_cut, label=label)
-    plt.xlabel("Normalized epoch (after 10%)")
+    plt.xlabel("Normalized epoch ")
     plt.ylabel("Energy")
-    plt.title("Posterior energy evolution (train)")
+    plt.title("Posterior energy evolution ")
     plt.grid(True)
     plt.yscale("log")
     plt.legend()
 
     plt.tight_layout()
-    save_path = os.path.join(SAVE_DIR, "posterior_statistics_evolution_train_mixed.png")
+    save_path = os.path.join(SAVE_DIR, "posterior_statistics_evolution_val_conditional.png")
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
     print(f"Saved plot to {save_path}")
     plt.show()
@@ -214,4 +316,5 @@ if __name__ == "__main__":
     else:
         run_all_experiments()
 
-    plot_statistics_evolution_train_mixed()
+    # plot_statistics_evolution()
+    plot_frobenius_norms_iterations()
