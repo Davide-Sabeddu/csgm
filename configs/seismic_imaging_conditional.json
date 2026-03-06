@@ -10,7 +10,7 @@
     "nt": 500,
     "beta_schedule": "linear",
     "input_size": "256,256",
-    "hidden_dim": 32,
+    "hidden_dim": 64, //default: 32
     "modes": 24,
     "nlayers": 4,
     "cuda": 0,
