@@ -46,8 +46,8 @@ def run_all_experiments():
         y_cond_single = dset_val.tensors[0][idx, 1, ...].unsqueeze(0)
         condition_sets.append(("val", idx, y_cond_single))
 
-    for cond_name, y_cond_single in condition_sets.items():
-        print(f"\n=== Running conditional: {cond_name} ===")
+    for cond_name, idx, y_cond_single in condition_sets:
+        print(f"\n=== Running conditional: {cond_name} sample {idx} ===")
         y_cond_single = y_cond_single.to(DEVICE)
 
         for i, exp_dir in enumerate(EXPERIMENTS):
@@ -83,7 +83,7 @@ def run_all_experiments():
                 all_samples = []
                 num_batches = int(np.ceil(NUM_SAMPLES / BATCH_SIZE))
 
-                for _ in tqdm(range(num_batches), desc=f"{cond_name} ckpt {ckpt_epoch}"):
+                for _ in tqdm(range(num_batches), desc=f"{cond_name} idx {idx} ckpt {ckpt_epoch}"):
                     sample = torch.randn((BATCH_SIZE, *args.input_size, 1), device=DEVICE)
                     timesteps = list(range(len(noise_scheduler)))[::-1]
 
@@ -102,46 +102,51 @@ def run_all_experiments():
 
                 mean_image = all_samples.mean(dim=0)
                 std_image  = all_samples.std(dim=0)
-                energy     = torch.norm(all_samples.view(all_samples.size(0), -1), dim=1)
 
                 results["epoch"].append(ckpt_epoch)
                 results["mean"].append(mean_image.numpy())
                 results["std"].append(std_image.numpy())
-                results["energy"].append(energy.numpy())
 
-                save_path = os.path.join(SAVE_DIR, f"{cond_name}_exp{i}_ckpt{ckpt_epoch}.npz")
+                # Save separately for each conditioning index
+                save_path = os.path.join(
+                    SAVE_DIR,
+                    f"{cond_name}_idx{idx}_exp{i}_ckpt{ckpt_epoch}.npz"
+                )
                 np.savez_compressed(save_path,
                                     samples=all_samples.numpy(),
                                     mean=mean_image.numpy(),
-                                    std=std_image.numpy(),
-                                    energy=energy.numpy())
+                                    std=std_image.numpy())
                 print(f"Saved {save_path}")
 
-            all_results.append((cond_name, results))
-
+            all_results.append((cond_name, idx, results))
 
 def load_existing_results():
     all_results = []
     labels = ["train", "val"]
 
     for cond_name in labels:
-        for i in range(len(EXPERIMENTS)):
-            results = {"epoch": [], "mean": [], "std": [], "energy": []}
+        if cond_name == "train":
+            idx_list = range(64) 
+        else:
+            idx_list = [0]  
 
-            for ckpt_epoch in CHECKPOINTS[i]:
-                path = os.path.join(SAVE_DIR, f"{cond_name}_exp{i}_ckpt{ckpt_epoch}.npz")
-                if not os.path.exists(path):
-                    continue
-                data = np.load(path)
-                results["epoch"].append(ckpt_epoch)
-                results["mean"].append(data["mean"])
-                results["std"].append(data["std"])
-                results["energy"].append(data["energy"])
+        for idx in idx_list:
+            for i in range(len(EXPERIMENTS)):
+                results = {"epoch": [], "mean": [], "std": []}
 
-            all_results.append((cond_name, results))
+                for ckpt_epoch in CHECKPOINTS[i]:
+                    path = os.path.join(SAVE_DIR,
+                                        f"{cond_name}_idx{idx}_exp{i}_ckpt{ckpt_epoch}.npz")
+                    if not os.path.exists(path):
+                        continue
+                    data = np.load(path)
+                    results["epoch"].append(ckpt_epoch)
+                    results["mean"].append(data["mean"])
+                    results["std"].append(data["std"])
+
+                all_results.append((cond_name, idx, results))
 
     return all_results
-
 
 # def plot_frobenius_norms_iterations():
 #     plt.figure(figsize=(12,5))
@@ -192,21 +197,46 @@ def plot_frobenius_norms_iterations():
     plt.figure(figsize=(12,5))
     labels = ["full dataset", "10% subset"]
 
-    # Number of samples for each experiment
     num_samples_list = [4752, 475]  # full dataset, 10% subset
     batch_size = 128
 
     # ---- Frobenius norm of mean ----
     plt.subplot(1, 2, 1)
-    for i, (cond_name, results) in enumerate(all_results):
-        if cond_name != "train":
-            continue
 
-        steps_per_epoch = int(np.ceil(num_samples_list[i] / batch_size))
-        iterations = np.array(results["epoch"]) * steps_per_epoch
-        mean_vals = np.array([np.linalg.norm(m, 'fro') for m in results["mean"]])
-        label = f"{labels[i]}"
-        plt.plot(iterations, mean_vals, label=label)
+    # group by experiment type (0=full,1=subset)
+    for exp_idx in range(len(EXPERIMENTS)):
+        mean_vals_list = []
+        std_vals_list = []
+
+        # loop over all conditionals for this experiment
+        for cond_name, idx, results in all_results:
+            # only consider training conditionals for this experiment
+            if cond_name != "train":
+                continue
+
+            # only pick results for this experiment index
+            # assuming ordering: exp0, exp1,... for each idx
+            # adjust if needed
+            exp_order = idx + exp_idx * 64
+            res = all_results[exp_order][2]  # get results dict
+            steps_per_epoch = int(np.ceil(num_samples_list[exp_idx] / batch_size))
+            iterations = np.array(res["epoch"]) * steps_per_epoch
+            mean_vals = np.array([np.linalg.norm(m, 'fro') for m in res["mean"]])
+            std_vals = np.array([np.linalg.norm(s, 'fro') for s in res["std"]])
+
+            mean_vals_list.append(mean_vals)
+            std_vals_list.append(std_vals)
+
+        # average across all conditionals
+        mean_vals_avg = np.mean(mean_vals_list, axis=0)
+        std_vals_avg = np.mean(std_vals_list, axis=0)
+
+        label = f"{labels[exp_idx]}"
+        plt.plot(iterations, mean_vals_avg, label=label)
+        plt.fill_between(iterations,
+                        mean_vals_avg - std_vals_avg,
+                        mean_vals_avg + std_vals_avg,
+                        alpha=0.3)  
 
     plt.xlabel("Total iterations")
     plt.ylabel("Frobenius norm of mean")
@@ -216,16 +246,28 @@ def plot_frobenius_norms_iterations():
 
     # ---- Frobenius norm of std ----
     plt.subplot(1, 2, 2)
-    for i, (cond_name, results) in enumerate(all_results):
-        if cond_name != "train":
-            continue
 
-        steps_per_epoch = int(np.ceil(num_samples_list[i] / batch_size))
-        iterations = np.array(results["epoch"]) * steps_per_epoch
-        std_vals = np.array([np.linalg.norm(s, 'fro') for s in results["std"]])
-        label = f"{labels[i]}"
-        plt.plot(iterations, std_vals, label=label)
+    for exp_idx in range(len(EXPERIMENTS)):
+        std_vals_list = []
 
+        for cond_name, idx, results in all_results:
+            if cond_name != "train":
+                continue
+
+            exp_order = idx + exp_idx * 64
+            res = all_results[exp_order][2]
+            steps_per_epoch = int(np.ceil(num_samples_list[exp_idx] / batch_size))
+            iterations = np.array(res["epoch"]) * steps_per_epoch
+            std_vals = np.array([np.linalg.norm(s, 'fro') for s in res["std"]])
+            std_vals_list.append(std_vals)
+
+        std_vals_avg = np.mean(std_vals_list, axis=0)
+        label = f"{labels[exp_idx]}"
+        plt.plot(iterations, std_vals_avg, label=label)
+        plt.fill_between(iterations,
+                        std_vals_avg - std_vals_avg,
+                        std_vals_avg + std_vals_avg,
+                        alpha=0.3)
     plt.xlabel("Total iterations")
     plt.ylabel("Frobenius norm of std")
     plt.title("Frobenius norm of posterior std")
